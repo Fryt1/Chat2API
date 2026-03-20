@@ -450,7 +450,7 @@ export class ZaiAdapter {
           'sec-ch-ua-platform': '"macOS"',
           Priority: 'u=1, i',
         },
-        responseType: request.stream !== false ? 'stream' : 'json',
+        responseType: 'stream',
         timeout: 120000,
         validateStatus: () => true,
       }
@@ -711,8 +711,34 @@ export class ZaiStreamHandler {
         created: this.created,
       }
 
-      // Check if response.data is a stream or JSON
-      if (response.data && typeof response.data.on === 'function') {
+      let resolved = false
+      const resolveOnce = (result: any) => {
+        if (resolved) return
+        resolved = true
+        resolve(result)
+      }
+
+      const rejectOnce = (err: Error) => {
+        if (resolved) return
+        resolved = true
+        reject(err)
+      }
+
+      setTimeout(() => {
+        if (!resolved) {
+          console.log('[Z.ai] Non-stream timeout, resolving with current data, content length:', data.choices[0].message.content.length)
+          resolveOnce(data)
+        }
+      }, 60000)
+
+      let stream = response
+
+      // Check if stream is a stream or JSON
+      console.log('[Z.ai] Non-stream: stream type:', typeof stream)
+      console.log('[Z.ai] Non-stream: stream.on type:', typeof stream?.on)
+      console.log('[Z.ai] Non-stream: stream is function?', typeof stream?.on === 'function')
+      if (stream && typeof stream.on === 'function') {
+        console.log('[Z.ai] Non-stream: taking stream path')
         // Stream response
         const parser = createParser({
           onEvent: (event: any) => {
@@ -733,22 +759,25 @@ export class ZaiStreamHandler {
                 if (result.usage) {
                   data.usage = result.usage
                 }
-                resolve(data)
+                resolveOnce(data)
               } else if (result.error || eventData.error) {
                 const error = result.error || eventData.error
                 data.choices[0].message.content += `\nError: ${error.detail || JSON.stringify(error)}`
-                resolve(data)
+                resolveOnce(data)
               }
             } catch (err) {
               console.error('[Z.ai] Non-stream parse error:', err)
-              reject(err)
+              rejectOnce(err instanceof Error ? err : new Error(String(err)))
             }
           },
         })
 
-        response.data.on('data', (buffer: Buffer) => parser.feed(buffer.toString()))
-        response.data.once('error', reject)
-        response.data.once('close', () => resolve(data))
+        stream.on('data', (buffer: Buffer) => parser.feed(buffer.toString()))
+        stream.once('error', rejectOnce)
+        stream.once('close', () => {
+          console.log('[Z.ai] Non-stream closed, resolving with current data, content length:', data.choices[0].message.content.length)
+          resolveOnce(data)
+        })
       } else if (response.data) {
         // JSON response - parse directly
         try {
@@ -785,13 +814,14 @@ export class ZaiStreamHandler {
           }
           
           console.log('[Z.ai] Non-stream JSON finished, content length:', data.choices[0].message.content.length)
-          resolve(data)
+          resolveOnce(data)
         } catch (err) {
           console.error('[Z.ai] Non-stream JSON parse error:', err)
-          reject(err)
+          rejectOnce(err instanceof Error ? err : new Error(String(err)))
         }
       } else {
-        resolve(data)
+        console.log('[Z.ai] Non-stream: response.data is falsy, taking empty path')
+        resolveOnce(data)
       }
     })
   }
