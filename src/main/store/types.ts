@@ -172,6 +172,19 @@ export interface ModelMapping {
 /**
  * Application Configuration Interface
  */
+export interface RequestLogConfig {
+  /** Whether detailed request logs are persisted */
+  enabled: boolean
+  /** Maximum persisted request log entries */
+  maxEntries: number
+  /** Whether request/response bodies are persisted */
+  includeBodies: boolean
+  /** Maximum characters per persisted body */
+  maxBodyChars: number
+  /** Whether obvious secrets are redacted before persisting */
+  redactSensitiveData: boolean
+}
+
 export interface AppConfig {
   /** Proxy service port */
   proxyPort: number
@@ -193,6 +206,8 @@ export interface AppConfig {
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   /** Log retention days */
   logRetentionDays: number
+  /** Request log storage configuration */
+  requestLogConfig: RequestLogConfig
   /** Request timeout (milliseconds) */
   requestTimeout: number
   /** Retry count */
@@ -702,6 +717,17 @@ export const DEFAULT_CONTEXT_MANAGEMENT_CONFIG: ContextManagementConfig = {
 }
 
 /**
+ * Default Request Log Configuration
+ */
+export const DEFAULT_REQUEST_LOG_CONFIG: RequestLogConfig = {
+  enabled: true,
+  maxEntries: 200,
+  includeBodies: false,
+  maxBodyChars: 0,
+  redactSensitiveData: true,
+}
+
+/**
  * Default Application Configuration
  */
 export const DEFAULT_CONFIG: AppConfig = {
@@ -715,6 +741,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   minimizeToTray: true,
   logLevel: 'info',
   logRetentionDays: 7,
+  requestLogConfig: DEFAULT_REQUEST_LOG_CONFIG,
   requestTimeout: 60000,
   retryCount: 3,
   apiKeys: [],

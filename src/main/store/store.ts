@@ -14,6 +14,7 @@ import {
   Provider,
   LogEntry,
   DEFAULT_CONFIG,
+  DEFAULT_REQUEST_LOG_CONFIG,
   BUILTIN_PROVIDERS,
   LogLevel,
   SystemPrompt,
@@ -613,7 +614,15 @@ class StoreManager {
    */
   getConfig(): AppConfig {
     this.ensureInitialized()
-    return this.store!.get('config') || DEFAULT_CONFIG
+    const config = this.store!.get('config') || DEFAULT_CONFIG
+    return {
+      ...DEFAULT_CONFIG,
+      ...config,
+      requestLogConfig: {
+        ...DEFAULT_REQUEST_LOG_CONFIG,
+        ...(config.requestLogConfig || {}),
+      },
+    }
   }
 
   /**
@@ -649,7 +658,20 @@ class StoreManager {
         ...updates.sessionConfig,
       }
     }
-    
+
+    if (updates.requestLogConfig) {
+      newConfig.requestLogConfig = {
+        ...DEFAULT_REQUEST_LOG_CONFIG,
+        ...(currentConfig.requestLogConfig || {}),
+        ...updates.requestLogConfig,
+      }
+    } else {
+      newConfig.requestLogConfig = {
+        ...DEFAULT_REQUEST_LOG_CONFIG,
+        ...(currentConfig.requestLogConfig || {}),
+      }
+    }
+
     this.store!.set('config', newConfig)
     return newConfig
   }
@@ -885,21 +907,29 @@ class StoreManager {
    */
   addRequestLog(entry: Omit<RequestLogEntry, 'id'>): RequestLogEntry {
     this.ensureInitialized()
-    const requestLogs = this.store!.get('requestLogs') || []
-    
+    const config = this.getConfig().requestLogConfig
     const newEntry: RequestLogEntry = {
-      ...entry,
+      ...this.sanitizeRequestLogEntry(entry),
       id: this.generateId(),
     }
-    
+
+    if (!config.enabled) {
+      return newEntry
+    }
+
+    const requestLogs = this.store!.get('requestLogs') || []
     requestLogs.push(newEntry)
-    
-    const config = this.getConfig()
-    const maxLogs = config.logRetentionDays * 500
+
+    const maxLogs = Math.max(0, config.maxEntries)
+    if (maxLogs === 0) {
+      this.store!.set('requestLogs', [])
+      return newEntry
+    }
+
     if (requestLogs.length > maxLogs) {
       requestLogs.splice(0, requestLogs.length - maxLogs)
     }
-    
+
     this.store!.set('requestLogs', requestLogs)
 
     this.mainWindow?.webContents.send(IpcChannels.REQUEST_LOGS_NEW, newEntry)
@@ -912,15 +942,78 @@ class StoreManager {
    */
   updateRequestLog(id: string, updates: Partial<RequestLogEntry>): boolean {
     this.ensureInitialized()
+    const config = this.getConfig().requestLogConfig
+    if (!config.enabled || config.maxEntries <= 0) return false
+
     const requestLogs = this.store!.get('requestLogs') || []
 
     const index = requestLogs.findIndex((l: RequestLogEntry) => l.id === id)
     if (index === -1) return false
 
-    requestLogs[index] = { ...requestLogs[index], ...updates }
+    requestLogs[index] = { ...requestLogs[index], ...this.sanitizeRequestLogUpdates(updates) }
     this.store!.set('requestLogs', requestLogs)
 
     return true
+  }
+
+  private sanitizeRequestLogEntry(entry: Omit<RequestLogEntry, 'id'>): Omit<RequestLogEntry, 'id'> {
+    const config = this.getConfig().requestLogConfig
+    const sanitized: Omit<RequestLogEntry, 'id'> = {
+      ...entry,
+      userInput: this.truncateText(entry.userInput, 500),
+      errorStack: undefined,
+    }
+
+    if (!config.includeBodies) {
+      sanitized.requestBody = undefined
+      sanitized.responseBody = undefined
+      return sanitized
+    }
+
+    sanitized.requestBody = this.sanitizeRequestLogBody(entry.requestBody)
+    sanitized.responseBody = this.sanitizeRequestLogBody(entry.responseBody)
+    sanitized.responsePreview = this.truncateText(entry.responsePreview, 1000)
+    sanitized.errorMessage = this.truncateText(entry.errorMessage, 1000)
+    return sanitized
+  }
+
+  private sanitizeRequestLogUpdates(updates: Partial<RequestLogEntry>): Partial<RequestLogEntry> {
+    const config = this.getConfig().requestLogConfig
+    const sanitized: Partial<RequestLogEntry> = {
+      ...updates,
+      userInput: this.truncateText(updates.userInput, 500),
+      errorStack: undefined,
+    }
+
+    if (!config.includeBodies) {
+      sanitized.requestBody = undefined
+      sanitized.responseBody = undefined
+      return sanitized
+    }
+
+    sanitized.requestBody = this.sanitizeRequestLogBody(updates.requestBody)
+    sanitized.responseBody = this.sanitizeRequestLogBody(updates.responseBody)
+    sanitized.responsePreview = this.truncateText(updates.responsePreview, 1000)
+    sanitized.errorMessage = this.truncateText(updates.errorMessage, 1000)
+    return sanitized
+  }
+
+  private sanitizeRequestLogBody(value: string | undefined): string | undefined {
+    if (!value) return value
+    const config = this.getConfig().requestLogConfig
+    const redacted = config.redactSensitiveData ? this.redactSensitiveText(value) : value
+    return this.truncateText(redacted, config.maxBodyChars)
+  }
+
+  private truncateText(value: string | undefined, maxChars: number): string | undefined {
+    if (!value) return value
+    if (maxChars <= 0) return undefined
+    if (value.length <= maxChars) return value
+    return `${value.slice(0, maxChars)}...[truncated ${value.length - maxChars} chars]`
+  }
+
+  private redactSensitiveText(value: string): string {
+    return value.replace(/("?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|cookie|set-cookie|password|token)"?\s*[:=]\s*)"?[^",}\]\s]+"?/gi, '$1"[REDACTED]"')
   }
 
   /**
