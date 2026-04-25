@@ -7,15 +7,19 @@ import Router from '@koa/router'
 import type { Context } from 'koa'
 import { managementAuthMiddleware } from '../../middleware/managementAuth'
 import AccountManager from '../../../store/accounts'
-import type { 
-  Account, 
-  CreateAccountRequest, 
+import type {
+  Account,
+  BatchImportAccountResult,
+  BatchImportAccountsRequest,
+  BatchImportAccountsResponse,
+  CreateAccountRequest,
   UpdateAccountRequest,
   ManagementApiResponse,
-  ValidationResult 
+  ValidationResult
 } from '../../../../../shared/types'
 
 const router = new Router({ prefix: '/v0/management' })
+const MAX_BATCH_IMPORT_ACCOUNTS = 100
 
 /**
  * Mask sensitive credential fields
@@ -54,6 +58,44 @@ function createSuccessResponse<T>(data: T): ManagementApiResponse<T> {
     success: true,
     data,
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function validateCreateAccountRequest(request: unknown): string | null {
+  if (!isRecord(request)) {
+    return 'Account item must be an object'
+  }
+
+  if (typeof request.providerId !== 'string' || request.providerId.trim() === '') {
+    return 'Missing or invalid required field: providerId'
+  }
+
+  if (typeof request.name !== 'string' || request.name.trim() === '') {
+    return 'Missing or invalid required field: name'
+  }
+
+  if (!isRecord(request.credentials)) {
+    return 'Missing or invalid required field: credentials'
+  }
+
+  for (const [key, value] of Object.entries(request.credentials)) {
+    if (typeof value !== 'string') {
+      return `Invalid credential value for field: ${key}`
+    }
+  }
+
+  if (request.email !== undefined && typeof request.email !== 'string') {
+    return 'Invalid field: email'
+  }
+
+  if (request.dailyLimit !== undefined && (typeof request.dailyLimit !== 'number' || !Number.isFinite(request.dailyLimit) || request.dailyLimit < 0)) {
+    return 'Invalid field: dailyLimit'
+  }
+
+  return null
 }
 
 /**
@@ -126,25 +168,25 @@ router.get('/accounts/:id', managementAuthMiddleware, async (ctx: Context) => {
 router.post('/accounts', managementAuthMiddleware, async (ctx: Context) => {
   try {
     const request = ctx.request.body as CreateAccountRequest
-    
+
     if (!request.providerId) {
       ctx.status = 400
       ctx.body = createErrorResponse('invalid_request', 'Missing required field: providerId')
       return
     }
-    
+
     if (!request.name) {
       ctx.status = 400
       ctx.body = createErrorResponse('invalid_request', 'Missing required field: name')
       return
     }
-    
+
     if (!request.credentials || typeof request.credentials !== 'object') {
       ctx.status = 400
       ctx.body = createErrorResponse('invalid_request', 'Missing or invalid required field: credentials')
       return
     }
-    
+
     const account = AccountManager.create({
       providerId: request.providerId,
       name: request.name,
@@ -152,14 +194,14 @@ router.post('/accounts', managementAuthMiddleware, async (ctx: Context) => {
       credentials: request.credentials,
       dailyLimit: request.dailyLimit,
     })
-    
+
     const maskedAccount = maskCredentials(account)
     ctx.status = 201
     ctx.set('Content-Type', 'application/json')
     ctx.body = createSuccessResponse(maskedAccount)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to create account'
-    
+
     if (errorMessage.includes('not found')) {
       ctx.status = 404
       ctx.body = createErrorResponse('provider_not_found', errorMessage)
@@ -167,6 +209,94 @@ router.post('/accounts', managementAuthMiddleware, async (ctx: Context) => {
       ctx.status = 500
       ctx.body = createErrorResponse('internal_error', errorMessage)
     }
+  }
+})
+
+/**
+ * POST /v0/management/accounts/import
+ * Batch import accounts
+ */
+router.post('/accounts/import', managementAuthMiddleware, async (ctx: Context) => {
+  try {
+    const request = ctx.request.body as BatchImportAccountsRequest
+
+    if (!request || !Array.isArray(request.accounts)) {
+      ctx.status = 400
+      ctx.body = createErrorResponse('invalid_request', 'Missing or invalid required field: accounts')
+      return
+    }
+
+    if (request.accounts.length === 0) {
+      ctx.status = 400
+      ctx.body = createErrorResponse('invalid_request', 'accounts must contain at least one item')
+      return
+    }
+
+    if (request.accounts.length > MAX_BATCH_IMPORT_ACCOUNTS) {
+      ctx.status = 400
+      ctx.body = createErrorResponse('invalid_request', `accounts cannot contain more than ${MAX_BATCH_IMPORT_ACCOUNTS} items`)
+      return
+    }
+
+    const results: BatchImportAccountResult[] = []
+
+    for (const [index, accountRequest] of request.accounts.entries()) {
+      const validationError = validateCreateAccountRequest(accountRequest)
+      if (validationError) {
+        results.push({
+          index,
+          success: false,
+          error: {
+            code: 'invalid_request',
+            message: validationError,
+          },
+        })
+        continue
+      }
+
+      try {
+        const account = AccountManager.create({
+          providerId: accountRequest.providerId,
+          name: accountRequest.name,
+          email: accountRequest.email,
+          credentials: accountRequest.credentials,
+          dailyLimit: accountRequest.dailyLimit,
+        })
+
+        results.push({
+          index,
+          success: true,
+          account: maskCredentials(account),
+        })
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to create account'
+        results.push({
+          index,
+          success: false,
+          error: {
+            code: errorMessage.includes('not found') ? 'provider_not_found' : 'internal_error',
+            message: errorMessage,
+          },
+        })
+      }
+    }
+
+    const imported = results.filter(result => result.success).length
+    const failed = results.length - imported
+    const response: BatchImportAccountsResponse = {
+      total: results.length,
+      imported,
+      failed,
+      results,
+    }
+
+    ctx.status = failed === 0 ? 201 : 200
+    ctx.set('Content-Type', 'application/json')
+    ctx.body = createSuccessResponse(response)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to import accounts'
+    ctx.status = 500
+    ctx.body = createErrorResponse('internal_error', errorMessage)
   }
 })
 

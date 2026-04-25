@@ -267,6 +267,27 @@ export interface CreateAccountRequest {
   dailyLimit?: number
 }
 
+export interface BatchImportAccountsRequest {
+  accounts: CreateAccountRequest[]
+}
+
+export interface BatchImportAccountResult {
+  index: number
+  success: boolean
+  account?: Account
+  error?: {
+    code: string
+    message: string
+  }
+}
+
+export interface BatchImportAccountsResponse {
+  total: number
+  imported: number
+  failed: number
+  results: BatchImportAccountResult[]
+}
+
 export interface UpdateAccountRequest {
   name?: string
   email?: string
