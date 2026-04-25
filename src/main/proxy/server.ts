@@ -285,16 +285,22 @@ export class ProxyServer {
           proxyStatusManager.setPort(this.port)
           proxyStatusManager.setHost(this.host)
 
-          storeManager.addLog('info', `Proxy server started successfully, listening on ${this.host}:${this.port}`)
+          const message = `Proxy server started successfully, listening on ${this.host}:${this.port}`
+          storeManager.addLog('info', message)
+          console.log(message)
 
           resolve(true)
         })
 
         this.server.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'EADDRINUSE') {
-            storeManager.addLog('error', `Port ${this.port} is already in use`)
+            const message = `Port ${this.port} is already in use`
+            storeManager.addLog('error', message)
+            console.error(message)
           } else {
-            storeManager.addLog('error', `Server error: ${err.message}`)
+            const message = `Server error: ${err.message}`
+            storeManager.addLog('error', message)
+            console.error(message)
           }
           this.server = null
           resolve(false)
@@ -304,7 +310,9 @@ export class ProxyServer {
           this.server = null
         })
       } catch (error) {
-        storeManager.addLog('error', `Failed to start server: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        const message = `Failed to start server: ${error instanceof Error ? error.message : 'Unknown error'}`
+        storeManager.addLog('error', message)
+        console.error(message)
         resolve(false)
       }
     })

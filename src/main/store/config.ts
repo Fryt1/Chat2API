@@ -10,6 +10,8 @@ import {
   Theme,
   ModelMapping,
   DEFAULT_CONFIG,
+  DEFAULT_REQUEST_LOG_CONFIG,
+  RequestLogConfig,
 } from './types'
 
 /**
@@ -297,8 +299,26 @@ export class ConfigManager {
     if (count < 0 || count > 10) {
       throw new Error('Retry count must be between 0-10')
     }
-    
+
     this.update({ retryCount: count })
+  }
+
+  static getRequestLogConfig(): RequestLogConfig {
+    const config = this.get()
+    return {
+      ...DEFAULT_REQUEST_LOG_CONFIG,
+      ...(config.requestLogConfig || {}),
+    }
+  }
+
+  static setRequestLogConfig(updates: Partial<RequestLogConfig>): void {
+    const current = this.getRequestLogConfig()
+    this.update({
+      requestLogConfig: {
+        ...current,
+        ...updates,
+      },
+    })
   }
 
   // ==================== Utility Methods ====================
@@ -334,7 +354,16 @@ export class ConfigManager {
         errors.push('Retry count must be between 0-10')
       }
     }
-    
+
+    if (config.requestLogConfig !== undefined) {
+      if (config.requestLogConfig.maxEntries < 0 || config.requestLogConfig.maxEntries > 10000) {
+        errors.push('Request log max entries must be between 0-10000')
+      }
+      if (config.requestLogConfig.maxBodyChars < 0 || config.requestLogConfig.maxBodyChars > 1000000) {
+        errors.push('Request log max body chars must be between 0-1000000')
+      }
+    }
+
     return {
       valid: errors.length === 0,
       errors,
