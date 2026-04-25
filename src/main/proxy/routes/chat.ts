@@ -13,11 +13,12 @@ import { streamHandler } from '../stream'
 import { proxyStatusManager } from '../status'
 import { modelMapper } from '../modelMapper'
 import { storeManager } from '../../store/store'
-import { 
+import {
   isAnthropicToolFormat,
   transformResponseToAnthropic,
   transformChunkToAnthropic
 } from '../utils/toolFormatConverter'
+import { estimateCompletionTokens, estimatePromptTokens } from '../utils/tokenEstimator'
 
 const router = new Router({ prefix: '/v1/chat' })
 
@@ -26,6 +27,51 @@ const router = new Router({ prefix: '/v1/chat' })
  */
 function generateRequestId(): string {
   return `chatcmpl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function extractStreamContent(collectedContent: string): string {
+  return collectedContent
+    .split('\n')
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice(5).trim())
+    .filter(data => data && data !== '[DONE]')
+    .map(data => {
+      try {
+        const chunk = JSON.parse(data)
+        return chunk.choices
+          ?.map((choice: any) => [choice.delta?.content, choice.delta?.reasoning_content].filter(Boolean).join(''))
+          .filter(Boolean)
+          .join('') || ''
+      } catch {
+        return ''
+      }
+    })
+    .filter(Boolean)
+    .join('')
+}
+
+function createStreamUsageChunk(requestId: string, model: string, request: ChatCompletionRequest, collectedContent: string): string {
+  const promptTokens = estimatePromptTokens(request)
+  const completionTokens = estimateCompletionTokens({
+    choices: [{
+      message: {
+        content: extractStreamContent(collectedContent),
+      },
+    }],
+  })
+
+  return `data: ${JSON.stringify({
+    id: requestId,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  })}\n\n`
 }
 
 /**
@@ -391,6 +437,7 @@ router.post('/completions', async (ctx: Context) => {
               responseBody: collectedContent || undefined,
             })
           }
+          wrapperStream.write(createStreamUsageChunk(requestId, actualModel, request, collectedContent))
           wrapperStream.end()
         })
       } else {
@@ -418,6 +465,7 @@ router.post('/completions', async (ctx: Context) => {
               responseBody: collectedContent || undefined,
             })
           }
+          wrapperStream.write(createStreamUsageChunk(requestId, actualModel, request, collectedContent))
           wrapperStream.end()
         })
       }

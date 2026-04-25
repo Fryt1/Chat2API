@@ -37,6 +37,7 @@ import {
   SummaryGenerator,
   type ChatMessage as ContextChatMessage,
 } from './services/contextManagementService'
+import { applyEstimatedUsage } from './utils/tokenEstimator'
 
 function shouldDeleteSession(): boolean {
   return sessionManager.shouldDeleteAfterChat()
@@ -659,7 +660,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: sessionId,
       }
@@ -771,7 +772,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: handler.getConversationId() ?? undefined,
       }
@@ -863,7 +864,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: handler.getConversationId() ?? undefined,
       }
@@ -957,7 +958,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: sessionId,
       }
@@ -1045,7 +1046,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: chatId,
       }
@@ -1136,7 +1137,7 @@ CRITICAL RULES:
         success: true,
         status: response.status,
         headers: this.extractHeaders(response.headers),
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: chatId,
       }
@@ -1402,7 +1403,7 @@ CRITICAL RULES:
         success: true,
         status: 200,
         headers: {},
-        body: result,
+        body: applyEstimatedUsage(result, request),
         latency,
         providerSessionId: sessionId,
       }
